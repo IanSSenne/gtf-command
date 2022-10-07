@@ -1,6 +1,7 @@
 {
   "name": "gtf-command",
   "version": "0.0.4",
+  "main": "./dist/command.js",
   "scripts": {
     "build": "tsc && node build-lib"
   },
