@@ -1,0 +1,12 @@
+{
+  "include": ["./src/command.ts"],
+  "exclude": [],
+  "compilerOptions": {
+    "outDir": "./",
+    "declaration": true,
+    "target": "ES2021",
+    "module": "es6",
+    "moduleResolution": "node"
+    // "types": ["./types/global.d.ts"]
+  }
+}
