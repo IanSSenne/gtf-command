@@ -2,7 +2,7 @@
   "include": ["./src/command.ts"],
   "exclude": [],
   "compilerOptions": {
-    "outDir": "./",
+    "outDir": "./dist",
     "declaration": true,
     "target": "ES2021",
     "module": "es6",

@@ -1,8 +1,5 @@
 // src/internal/command.ts
-import {
-  BlockLocation,
-  world
-} from "mojang-minecraft";
+import { world } from "mojang-minecraft";
 
 // src/internal/ArgumentMatcher.ts
 var ArgumentMatcher = class {
@@ -16,11 +13,14 @@ var ArgumentMatcher = class {
     this.name = name;
     return this;
   }
+  getCompletion(_context) {
+    throw new Error("Method not implemented.");
+  }
 };
 
 // src/internal/arguments/PositionArgument.ts
 import { Vector, Location } from "mojang-minecraft";
-var regExp = /^([~^]-?\d*(?:\.\d*)?|-?\d+(?:\.\d*)?) ([~^]-?\d*(?:\.\d*)?|-?\d+(?:\.\d*)?) ([~^]-?\d*(?:\.\d*)?|-?\d+(?:\.\d*)?)/;
+var regExp = /^([~^]-?\d*(?:\.\d+)?|-?\d+(?:\.\d+)?)/;
 function getAxis(value) {
   let type = value.startsWith("^") ? "local" : value.startsWith("~") ? "relative" : "absolute";
   let numericValue = value.substring(type === "absolute" ? 0 : 1);
@@ -64,14 +64,16 @@ function computeLocalOffset(x, y, z, player) {
 }
 var PositionArgumentMatcher = class extends ArgumentMatcher {
   matches(_value, context) {
-    const matches = _value.match(regExp);
-    if (!matches) {
-      return {
-        success: false,
-        error: "Expected a Position."
-      };
+    let raw = "";
+    let matches = [];
+    for (let i = 0; i < 3; i++) {
+      const [_raw, value] = _value.match(regExp);
+      matches.push(value);
+      raw += _raw;
+      if (!raw)
+        return { success: false, error: "Invalid position" };
     }
-    let [raw, x, y, z] = matches;
+    let [x, y, z] = matches;
     const _x = getAxis(y);
     const _y = getAxis(x);
     const _z = getAxis(z);
@@ -95,6 +97,9 @@ var PositionArgumentMatcher = class extends ArgumentMatcher {
       };
     }
   }
+  getCompletion(_context) {
+    return `<${this.name}:position>`;
+  }
 };
 
 // src/internal/command.ts
@@ -110,6 +115,22 @@ var RootArgumentMatcher = class {
   setName(name) {
     this.name = name;
     return this;
+  }
+  getCompletion() {
+    return "";
+  }
+};
+var VoidArgumentMatcher = class extends ArgumentMatcher {
+  matches(_value) {
+    return {
+      success: true,
+      value: "",
+      raw: "",
+      push: false
+    };
+  }
+  getCompletion() {
+    return "";
   }
 };
 var LiteralArgumentMatcher = class extends ArgumentMatcher {
@@ -128,12 +149,16 @@ var LiteralArgumentMatcher = class extends ArgumentMatcher {
       error: `Expected '${this.literal}'`
     };
   }
+  getCompletion() {
+    return this.literal;
+  }
 };
 var RequiresArgumentMatcher = class extends ArgumentMatcher {
-  constructor(fn, erorrMessage) {
+  constructor(fn, erorrMessage, isConsideredInHelp = true) {
     super();
     this.fn = fn;
     this.erorrMessage = erorrMessage;
+    this.isConsideredInHelp = isConsideredInHelp;
   }
   matches(value, ctx) {
     return {
@@ -144,18 +169,52 @@ var RequiresArgumentMatcher = class extends ArgumentMatcher {
       error: this.erorrMessage
     };
   }
+  getCompletion() {
+    return "";
+  }
 };
 var StringArgumentMatcher = class extends ArgumentMatcher {
-  constructor() {
+  constructor(greedy = false) {
     super();
+    this.greedy = greedy;
   }
   matches(value) {
-    return {
-      success: true,
-      value,
-      raw: value,
-      push: true
-    };
+    if (this.greedy) {
+      return {
+        success: true,
+        value,
+        raw: value,
+        push: true
+      };
+    } else {
+      let v = value.split(" ")[0];
+      if (v[0] === '"') {
+        v = "";
+        let i = 1;
+        while (i < value.length) {
+          if (value[i] === '"' && value[i - 1] !== "\\") {
+            break;
+          }
+          v += value[i];
+          i++;
+        }
+        if (i === v.length) {
+          return {
+            success: false,
+            error: "Expected matching quote"
+          };
+        }
+      }
+      return {
+        success: true,
+        value: v,
+        raw: v,
+        push: true
+      };
+    }
+  }
+  getCompletion() {
+    return `<${this.name}:string>`;
   }
 };
 var NumberArgumentMatcher = class extends ArgumentMatcher {
@@ -192,17 +251,48 @@ var NumberArgumentMatcher = class extends ArgumentMatcher {
       };
     }
   }
-};
-var SelectorArgumentMatcher = class extends ArgumentMatcher {
-  constructor() {
-    super();
+  getCompletion() {
+    return `<${this.name}:number>`;
   }
 };
 var ArgumentBuilder = class {
-  constructor(matcher = new RootArgumentMatcher()) {
+  constructor(matcher = new VoidArgumentMatcher()) {
     this.matcher = matcher;
     this.depth = 0;
+    this._description = null;
     this.actions = [];
+  }
+  _internalCall(Method, ...args) {
+    switch (Method) {
+      case 0 /* __add */:
+        return this.__add(args[0]);
+      case 1 /* __redirect */:
+        return this.__redirect(args[0]);
+      case 2 /* __getDescription */:
+        return this.__getDescription();
+      case 3 /* __getMatcher */:
+        return this.__getMatcher();
+      case 4 /* __evaluate */:
+        return this.__evaluate(args[0], args[1], args[2]);
+      case 5 /* __isExecutable */:
+        return this.__isExecutable();
+      case 6 /* __getActions */:
+        return this.__getActions();
+      case 7 /* __getParent */:
+        return this.__getParent();
+    }
+  }
+  __isExecutable() {
+    return this.executable !== void 0;
+  }
+  __getDescription() {
+    return this._description;
+  }
+  __getMatcher() {
+    return this.matcher;
+  }
+  __getActions() {
+    return this.actions;
   }
   bind(ab) {
     this.actions.push(ab);
@@ -212,14 +302,17 @@ var ArgumentBuilder = class {
   setDepth(depth, parent = this) {
     this.parent = parent;
     this.depth = depth;
-    this.actions.forEach((a) => a.setDepth(depth + 1));
+    this.actions.forEach((a) => a.setDepth(depth + 1, this));
+  }
+  __getParent() {
+    return this.parent;
   }
   get root() {
     return this?.parent?.root || this;
   }
   __add(target) {
     this.actions.push(target);
-    target.setDepth(this.depth + 1);
+    target.setDepth(this.depth + 1, this);
   }
   __redirect(target) {
     this.actions.push(...target.actions);
@@ -230,26 +323,27 @@ var ArgumentBuilder = class {
   number(name) {
     return this.bind(new ArgumentBuilder(new NumberArgumentMatcher().setName(name)));
   }
-  string(name) {
-    return this.bind(new ArgumentBuilder(new StringArgumentMatcher().setName(name)));
+  string(name, greedy = false) {
+    return this.bind(new ArgumentBuilder(new StringArgumentMatcher(greedy).setName(name)));
   }
   position(name) {
     return this.bind(new ArgumentBuilder(new PositionArgumentMatcher().setName(name)));
   }
-  selector(name) {
-    return this.bind(new ArgumentBuilder(new SelectorArgumentMatcher().setName(name)));
-  }
   argument(name, matcher) {
     return this.bind(new ArgumentBuilder(matcher.setName(name)));
   }
-  requires(fn, error) {
-    return this.bind(new ArgumentBuilder(new RequiresArgumentMatcher(fn, error)));
+  requires(fn, error, isConsideredInHelp = true) {
+    return this.bind(new ArgumentBuilder(new RequiresArgumentMatcher(fn, error, isConsideredInHelp)));
   }
   executes(callback) {
     this.bind(new ArgumentBuilder()).executable = callback;
     return this;
   }
-  evaluate(ctx, command, args = []) {
+  description(description) {
+    this._description = description;
+    return this;
+  }
+  __evaluate(ctx, command, args = []) {
     if (command.length === 0) {
       if (this.executable) {
         try {
@@ -273,7 +367,7 @@ var ArgumentBuilder = class {
     if (result.success === true) {
       let results = [];
       for (const action of this.actions) {
-        const result2 = action.evaluate(ctx, command.trim().substring(result.raw.length), result.push === false ? [...args] : [...args, result.value]);
+        const result2 = action.__evaluate(ctx, command.trim().substring(result.raw.length), result.push === false ? [...args] : [...args, result.value]);
         if (result2.success)
           return result2;
         results.push(result2);
@@ -292,39 +386,79 @@ var ArgumentBuilder = class {
     }
   }
 };
-var commandRoot = new ArgumentBuilder();
-var helpMessages = /* @__PURE__ */ new Map();
-function registerCommand(command, help, alias = []) {
+var commandRoot = new ArgumentBuilder(new RootArgumentMatcher());
+function getPossibleCompletions(ctx) {
+  let executableNodes = [];
+  function findExecutableNodes(node) {
+    const matcher = node._internalCall(3 /* __getMatcher */);
+    if (matcher instanceof RequiresArgumentMatcher) {
+      if (matcher.isConsideredInHelp) {
+        const result = matcher.matches("", ctx);
+        if (!result.success) {
+          return;
+        }
+      }
+    }
+    if (node._internalCall(5 /* __isExecutable */)) {
+      executableNodes.push(node);
+    }
+    for (const action of node._internalCall(6 /* __getActions */)) {
+      findExecutableNodes(action);
+    }
+  }
+  findExecutableNodes(commandRoot);
+  function getCompletionsForNode(node) {
+    const matcher = node._internalCall(3 /* __getMatcher */);
+    if (matcher instanceof RootArgumentMatcher) {
+      return "";
+    }
+    const completion = matcher.getCompletion(ctx);
+    const parent = node._internalCall(7 /* __getParent */);
+    if (completion) {
+      return (getCompletionsForNode(parent) + " " + completion).trim();
+    }
+    return getCompletionsForNode(parent);
+  }
+  function getDescriptionForNode(node) {
+    let desc = node._internalCall(2 /* __getDescription */);
+    if (desc) {
+      return desc;
+    }
+    if (node === commandRoot) {
+      return "No description provided";
+    }
+    return node._internalCall(7 /* __getParent */)._internalCall(2 /* __getDescription */);
+  }
+  let results = [];
+  for (const node of executableNodes) {
+    results.push([getCompletionsForNode(node), getDescriptionForNode(node)]);
+  }
+}
+function registerCommand(command, alias = []) {
   alias.forEach((a) => {
-    helpMessages.set(a, help);
-    commandRoot.literal(a).__redirect(command);
+    commandRoot.literal(a)._internalCall(1 /* __redirect */, command);
   });
-  commandRoot.__add(command);
-  helpMessages.set(command.matcher.name, help);
+  commandRoot._internalCall(0 /* __add */, command);
 }
 function literal(value) {
   return new ArgumentBuilder(new LiteralArgumentMatcher(value));
 }
-var OVERWORLD = world.getDimension("overworld");
-var THE_NETHER = world.getDimension("nether");
-var THE_END = world.getDimension("the end");
-function getDimension(player) {
-  const bl = new BlockLocation(Math.floor(player.location.x), Math.floor(player.location.y), Math.floor(player.location.z));
-  if (OVERWORLD.getEntitiesAtBlockLocation(bl).includes(player))
-    return OVERWORLD;
-  if (THE_NETHER.getEntitiesAtBlockLocation(bl).includes(player))
-    return THE_NETHER;
-  if (THE_END.getEntitiesAtBlockLocation(bl).includes(player))
-    return THE_END;
-  throw new Error("Unable to locate player dimension");
+var config = {
+  commandIndicator: "-",
+  disableDefaultChatHandler: false
+};
+function updateConfig(configUpdate) {
+  Object.assign(config, configUpdate);
 }
 world.events.beforeChat.subscribe((event) => {
-  if (event.message.startsWith("-")) {
+  if (config.disableDefaultChatHandler)
+    return;
+  if (event.message.startsWith(config.commandIndicator)) {
     const command = event.message.substring(1);
-    const result = commandRoot.evaluate({
+    const result = commandRoot._internalCall(4 /* __evaluate */, {
       event,
       sender: event.sender,
-      dimension: getDimension(event.sender)
+      dimension: event.sender.dimension
     }, command);
     event.cancel = true;
     if (result.success === false) {
@@ -337,9 +471,10 @@ export {
   NumberArgumentMatcher,
   StringArgumentMatcher,
   commandRoot,
-  helpMessages,
+  getPossibleCompletions,
   literal,
-  registerCommand
+  registerCommand,
+  updateConfig
 };
 /*!
 Copyright 2022 Ian Senne

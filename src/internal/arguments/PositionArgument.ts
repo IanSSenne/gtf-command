@@ -4,8 +4,7 @@ import {
   CommandContext,
 } from "../ArgumentMatcher";
 import { Vector, Location, Player } from "mojang-minecraft";
-const regExp =
-  /^([~^]-?\d*(?:\.\d*)?|-?\d+(?:\.\d*)?) ([~^]-?\d*(?:\.\d*)?|-?\d+(?:\.\d*)?) ([~^]-?\d*(?:\.\d*)?|-?\d+(?:\.\d*)?)/;
+const regExp = /^([~^]-?\d*(?:\.\d+)?|-?\d+(?:\.\d+)?)/;
 type axisDefn = {
   type: "absolute" | "local" | "relative";
   value: number;
@@ -93,14 +92,15 @@ function computeLocalOffset(
 }
 export class PositionArgumentMatcher extends ArgumentMatcher {
   matches(_value: string, context: CommandContext): ArgumentResult<Location> {
-    const matches = _value.match(regExp);
-    if (!matches) {
-      return {
-        success: false,
-        error: "Expected a Position.",
-      };
+    let raw = "";
+    let matches = [];
+    for (let i = 0; i < 3; i++) {
+      const [_raw, value] = _value.match(regExp);
+      matches.push(value);
+      raw += _raw;
+      if (!raw) return { success: false, error: "Invalid position" };
     }
-    let [raw, x, y, z] = matches;
+    let [x, y, z] = matches;
     const _x = getAxis(y);
     const _y = getAxis(x);
     const _z = getAxis(z);
@@ -128,5 +128,8 @@ export class PositionArgumentMatcher extends ArgumentMatcher {
         raw,
       };
     }
+  }
+  public getCompletion(_context: CommandContext): string {
+    return `<${this.name}:position>`;
   }
 }

@@ -33,4 +33,8 @@ export declare class ArgumentMatcher {
      * @private
      */
     setName(name: string): this;
+    /**
+     * getCompletion
+     */
+    getCompletion(_context: CommandContext): string;
 }

@@ -1,11 +1,4 @@
-import {
-  BlockLocation,
-  ChatEvent,
-  Dimension,
-  Location,
-  Player,
-  world,
-} from "mojang-minecraft";
+import { Location, world } from "mojang-minecraft";
 import {
   ArgumentMatcher,
   ArgumentResult,
@@ -19,6 +12,7 @@ type AppendArgument<Base, Next> = Base extends (
 ) => infer R
   ? (ctx: X, ...args: [...E, Next]) => R
   : never;
+type Arguments<Fn> = Fn extends (...args: infer E) => any ? E : never;
 type GuessTypeBasedOnArgumentResultType<T extends ArgumentResult<any>> =
   T extends { value: infer U }
     ? U extends { success: false }
@@ -50,6 +44,22 @@ class RootArgumentMatcher {
     this.name = name;
     return this;
   }
+  getCompletion(): string {
+    return "";
+  }
+}
+class VoidArgumentMatcher extends ArgumentMatcher {
+  matches(_value: string): ArgumentResult<any> {
+    return {
+      success: true,
+      value: "",
+      raw: "",
+      push: false,
+    };
+  }
+  getCompletion(): string {
+    return "";
+  }
 }
 class LiteralArgumentMatcher extends ArgumentMatcher {
   constructor(private readonly literal: string) {
@@ -68,11 +78,15 @@ class LiteralArgumentMatcher extends ArgumentMatcher {
           error: `Expected '${this.literal}'`,
         };
   }
+  getCompletion(): string {
+    return this.literal;
+  }
 }
 class RequiresArgumentMatcher extends ArgumentMatcher {
   constructor(
     public fn: (ctx: CommandContext) => boolean,
-    public erorrMessage: string
+    public erorrMessage: string,
+    public isConsideredInHelp: boolean = true
   ) {
     super();
   }
@@ -85,18 +99,53 @@ class RequiresArgumentMatcher extends ArgumentMatcher {
       error: this.erorrMessage,
     };
   }
+  getCompletion(): string {
+    return "";
+  }
 }
 export class StringArgumentMatcher extends ArgumentMatcher {
-  constructor() {
+  constructor(private greedy = false) {
     super();
   }
   matches(value: string): ArgumentResult<string> {
-    return {
-      success: true,
-      value,
-      raw: value,
-      push: true,
-    };
+    if (this.greedy) {
+      return {
+        success: true,
+        value,
+        raw: value,
+        push: true,
+      };
+    } else {
+      let v = value.split(" ")[0];
+      if (v[0] === '"') {
+        // find the matching quote
+        v = "";
+        let i = 1;
+        while (i < value.length) {
+          if (value[i] === '"' && value[i - 1] !== "\\") {
+            break;
+          }
+          v += value[i];
+          i++;
+        }
+        if (i === v.length) {
+          // no matching quote
+          return {
+            success: false,
+            error: "Expected matching quote",
+          };
+        }
+      }
+      return {
+        success: true,
+        value: v,
+        raw: v,
+        push: true,
+      };
+    }
+  }
+  getCompletion(): string {
+    return `<${this.name}:string>`;
   }
 }
 export class NumberArgumentMatcher extends ArgumentMatcher {
@@ -133,23 +182,84 @@ export class NumberArgumentMatcher extends ArgumentMatcher {
       };
     }
   }
-}
-class SelectorArgumentMatcher extends ArgumentMatcher {
-  constructor() {
-    super();
+  getCompletion(): string {
+    return `<${this.name}:number>`;
   }
+}
+
+enum InternalCallType {
+  __add,
+  __redirect,
+  __getDescription,
+  __getMatcher,
+  __evaluate,
+  __isExecutable,
+  __getActions,
+  __getParent,
 }
 class ArgumentBuilder<
   HandlerFn extends Function = (ctx: CommandContext) => void
 > {
-  actions: ArgumentBuilder[];
-  depth = 0;
-  executable?: HandlerFn;
-  parent: ArgumentBuilder;
+  private actions: ArgumentBuilder[];
+  private depth = 0;
+  private executable?: HandlerFn;
+  private parent: ArgumentBuilder;
+  private _description: string = null;
   constructor(
-    public readonly matcher: ArgumentMatcher = new RootArgumentMatcher()
+    private readonly matcher: ArgumentMatcher = new VoidArgumentMatcher()
   ) {
     this.actions = [];
+  }
+  public _internalCall<
+    T extends InternalCallType,
+    X extends (...args: any) => any = T extends InternalCallType.__add
+      ? ArgumentBuilder["__add"]
+      : T extends InternalCallType.__redirect
+      ? ArgumentBuilder["__redirect"]
+      : T extends InternalCallType.__getDescription
+      ? ArgumentBuilder["__getDescription"]
+      : T extends InternalCallType.__getMatcher
+      ? ArgumentBuilder["__getMatcher"]
+      : T extends InternalCallType.__evaluate
+      ? ArgumentBuilder["__evaluate"]
+      : T extends InternalCallType.__isExecutable
+      ? ArgumentBuilder["__isExecutable"]
+      : T extends InternalCallType.__getActions
+      ? ArgumentBuilder["__getActions"]
+      : T extends InternalCallType.__getParent
+      ? ArgumentBuilder["__getParent"]
+      : (...args: any[]) => any
+  >(Method: T, ...args: Arguments<X>): ReturnType<X> {
+    switch (Method) {
+      case InternalCallType.__add:
+        return this.__add(args[0]) as ReturnType<X>;
+      case InternalCallType.__redirect:
+        return this.__redirect(args[0]) as ReturnType<X>;
+      case InternalCallType.__getDescription:
+        return this.__getDescription() as ReturnType<X>;
+      case InternalCallType.__getMatcher:
+        return this.__getMatcher() as ReturnType<X>;
+      case InternalCallType.__evaluate:
+        return this.__evaluate(args[0], args[1], args[2]) as ReturnType<X>;
+      case InternalCallType.__isExecutable:
+        return this.__isExecutable() as ReturnType<X>;
+      case InternalCallType.__getActions:
+        return this.__getActions() as ReturnType<X>;
+      case InternalCallType.__getParent:
+        return this.__getParent() as ReturnType<X>;
+    }
+  }
+  private __isExecutable(): boolean {
+    return this.executable !== undefined;
+  }
+  private __getDescription(): string {
+    return this._description;
+  }
+  private __getMatcher(): ArgumentMatcher {
+    return this.matcher;
+  }
+  private __getActions(): ArgumentBuilder[] {
+    return this.actions;
   }
   private bind<T extends ArgumentBuilder<any>>(ab: T): T {
     this.actions.push(ab);
@@ -159,9 +269,12 @@ class ArgumentBuilder<
   private setDepth(depth: number, parent: ArgumentBuilder<any> = this): void {
     this.parent = parent;
     this.depth = depth;
-    this.actions.forEach((a) => a.setDepth(depth + 1));
+    this.actions.forEach((a) => a.setDepth(depth + 1, this));
   }
-  get root(): ArgumentBuilder<any> {
+  private __getParent(): ArgumentBuilder<any> {
+    return this.parent;
+  }
+  private get root(): ArgumentBuilder<any> {
     return this?.parent?.root || this;
   }
 
@@ -170,16 +283,16 @@ class ArgumentBuilder<
    * @param target
    * @private
    */
-  __add(target: ArgumentBuilder<any>): void {
+  private __add(target: ArgumentBuilder<any>): void {
     this.actions.push(target);
-    target.setDepth(this.depth + 1);
+    target.setDepth(this.depth + 1, this);
   }
   /**
    *
    * @param target
    * @private
    */
-  __redirect(target: ArgumentBuilder<any>): void {
+  private __redirect(target: ArgumentBuilder<any>): void {
     this.actions.push(...target.actions);
   }
   /**
@@ -225,10 +338,13 @@ class ArgumentBuilder<
    * @param name
    * @returns
    */
-  string(name: string): ArgumentBuilder<AppendArgument<HandlerFn, string>> {
+  string(
+    name: string,
+    greedy = false
+  ): ArgumentBuilder<AppendArgument<HandlerFn, string>> {
     return this.bind(
       new ArgumentBuilder<AppendArgument<HandlerFn, string>>(
-        new StringArgumentMatcher().setName(name)
+        new StringArgumentMatcher(greedy).setName(name)
       )
     );
   }
@@ -251,23 +367,6 @@ class ArgumentBuilder<
         // the compiler is catching this but not the language server :/
         // @ts-ignore
         new PositionArgumentMatcher().setName(name)
-      )
-    );
-  }
-  /**
-   * @example
-   * ```
-   * ArgumentBuilderInstance.literal("roll").selector("pattern")
-   * ```
-   * this would match `roll 1d20` and provide `1d20` as the pattern
-   *
-   * @param name
-   * @returns
-   */
-  selector(name: string): ArgumentBuilder<AppendArgument<HandlerFn, string>> {
-    return this.bind(
-      new ArgumentBuilder<AppendArgument<HandlerFn, string>>(
-        new SelectorArgumentMatcher().setName(name)
       )
     );
   }
@@ -316,10 +415,13 @@ class ArgumentBuilder<
    **/
   requires(
     fn: (ctx: CommandContext) => boolean,
-    error: string
+    error: string,
+    isConsideredInHelp = true
   ): ArgumentBuilder<HandlerFn> {
     return this.bind(
-      new ArgumentBuilder<HandlerFn>(new RequiresArgumentMatcher(fn, error))
+      new ArgumentBuilder<HandlerFn>(
+        new RequiresArgumentMatcher(fn, error, isConsideredInHelp)
+      )
     );
   }
   /**
@@ -337,6 +439,18 @@ class ArgumentBuilder<
     this.bind(new ArgumentBuilder<HandlerFn>()).executable = callback;
     return this;
   }
+
+  /**
+   * @example
+   * ArgumentBuilderInstance.literal("roll").description("rolls a die")
+   * @param description
+   * @returns
+   *
+   */
+  description(description: string): this {
+    this._description = description;
+    return this;
+  }
   /**
    * @example
    * ```
@@ -347,7 +461,7 @@ class ArgumentBuilder<
    * @param command
    * @returns
    **/
-  evaluate(
+  private __evaluate(
     ctx: CommandContext,
     command: string,
     args: any[] = []
@@ -375,7 +489,7 @@ class ArgumentBuilder<
     if (result.success === true) {
       let results: (CommandResult & { depth?: number })[] = [];
       for (const action of this.actions) {
-        const result2 = action.evaluate(
+        const result2 = action.__evaluate(
           ctx,
           command.trim().substring(result.raw.length),
           result.push === false ? [...args] : [...args, result.value]
@@ -401,48 +515,88 @@ class ArgumentBuilder<
     }
   }
 }
-export const commandRoot = new ArgumentBuilder();
-export const helpMessages = new Map<string, string>();
+export const commandRoot = new ArgumentBuilder(new RootArgumentMatcher());
+export function getPossibleCompletions(ctx: CommandContext) {
+  let executableNodes: ArgumentBuilder<any>[] = [];
+  function findExecutableNodes(node: ArgumentBuilder) {
+    const matcher = node._internalCall(InternalCallType.__getMatcher);
+    if (matcher instanceof RequiresArgumentMatcher) {
+      if (matcher.isConsideredInHelp) {
+        const result = matcher.matches("", ctx);
+        if (!result.success) {
+          // this branch is not accessible to the current context provider
+          return;
+        }
+      }
+    }
+    if (node._internalCall(InternalCallType.__isExecutable)) {
+      executableNodes.push(node);
+    }
+    for (const action of node._internalCall(InternalCallType.__getActions)) {
+      findExecutableNodes(action);
+    }
+  }
+  findExecutableNodes(commandRoot);
+  function getCompletionsForNode(node: ArgumentBuilder) {
+    const matcher = node._internalCall(InternalCallType.__getMatcher);
+    if (matcher instanceof RootArgumentMatcher) {
+      // end of the line
+      return "";
+    }
+    const completion = matcher.getCompletion(ctx);
+    const parent = node._internalCall(InternalCallType.__getParent);
+    if (completion) {
+      return (getCompletionsForNode(parent) + " " + completion).trim();
+    }
+    return getCompletionsForNode(parent);
+  }
+  function getDescriptionForNode(node: ArgumentBuilder) {
+    let desc = node._internalCall(InternalCallType.__getDescription);
+    if (desc) {
+      return desc;
+    }
+    if (node === commandRoot) {
+      return "No description provided";
+    }
+    return node
+      ._internalCall(InternalCallType.__getParent)
+      ._internalCall(InternalCallType.__getDescription);
+  }
+  let results: string[][] = [];
+  for (const node of executableNodes) {
+    results.push([getCompletionsForNode(node), getDescriptionForNode(node)]);
+  }
+}
 export function registerCommand(
   command: ArgumentBuilder,
-  help: string,
   alias: string[] = []
 ) {
   alias.forEach((a) => {
-    helpMessages.set(a, help);
-    commandRoot.literal(a).__redirect(command);
+    commandRoot.literal(a)._internalCall(InternalCallType.__redirect, command);
   });
-  commandRoot.__add(command);
-  helpMessages.set(command.matcher.name, help);
+  commandRoot._internalCall(InternalCallType.__add, command);
 }
 export function literal(value: string): ArgumentBuilder {
   return new ArgumentBuilder(new LiteralArgumentMatcher(value));
 }
 
-const OVERWORLD = world.getDimension("overworld");
-const THE_NETHER = world.getDimension("nether");
-const THE_END = world.getDimension("the end");
-function getDimension(player: Player) {
-  const bl = new BlockLocation(
-    Math.floor(player.location.x),
-    Math.floor(player.location.y),
-    Math.floor(player.location.z)
-  );
-  if (OVERWORLD.getEntitiesAtBlockLocation(bl).includes(player))
-    return OVERWORLD;
-  if (THE_NETHER.getEntitiesAtBlockLocation(bl).includes(player))
-    return THE_NETHER;
-  if (THE_END.getEntitiesAtBlockLocation(bl).includes(player)) return THE_END;
-  throw new Error("Unable to locate player dimension");
+let config = {
+  commandIndicator: "-",
+  disableDefaultChatHandler: false,
+};
+export function updateConfig(configUpdate: Partial<typeof config>) {
+  Object.assign(config, configUpdate);
 }
 world.events.beforeChat.subscribe((event) => {
-  if (event.message.startsWith("-")) {
+  if (config.disableDefaultChatHandler) return;
+  if (event.message.startsWith(config.commandIndicator)) {
     const command = event.message.substring(1);
-    const result = commandRoot.evaluate(
+    const result = commandRoot._internalCall(
+      InternalCallType.__evaluate,
       {
         event,
         sender: event.sender,
-        dimension: getDimension(event.sender),
+        dimension: event.sender.dimension,
       },
       command
     );

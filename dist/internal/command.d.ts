@@ -2,6 +2,7 @@ import { Location } from "mojang-minecraft";
 import { ArgumentMatcher, ArgumentResult, CommandContext } from "./ArgumentMatcher";
 declare type discard = never;
 declare type AppendArgument<Base, Next> = Base extends (ctx: infer X, ...args: infer E) => infer R ? (ctx: X, ...args: [...E, Next]) => R : never;
+declare type Arguments<Fn> = Fn extends (...args: infer E) => any ? E : never;
 declare type GuessTypeBasedOnArgumentResultType<T extends ArgumentResult<any>> = T extends {
     value: infer U;
 } ? U extends {
@@ -17,35 +18,55 @@ export declare type CommandResult = {
     depth?: number | undefined;
 };
 export declare class StringArgumentMatcher extends ArgumentMatcher {
-    constructor();
+    private greedy;
+    constructor(greedy?: boolean);
     matches(value: string): ArgumentResult<string>;
+    getCompletion(): string;
 }
 export declare class NumberArgumentMatcher extends ArgumentMatcher {
     constructor();
     matches(value: string): ArgumentResult<number>;
+    getCompletion(): string;
+}
+declare enum InternalCallType {
+    __add = 0,
+    __redirect = 1,
+    __getDescription = 2,
+    __getMatcher = 3,
+    __evaluate = 4,
+    __isExecutable = 5,
+    __getActions = 6,
+    __getParent = 7
 }
 declare class ArgumentBuilder<HandlerFn extends Function = (ctx: CommandContext) => void> {
-    readonly matcher: ArgumentMatcher;
-    actions: ArgumentBuilder[];
-    depth: number;
-    executable?: HandlerFn;
-    parent: ArgumentBuilder;
+    private readonly matcher;
+    private actions;
+    private depth;
+    private executable?;
+    private parent;
+    private _description;
     constructor(matcher?: ArgumentMatcher);
+    _internalCall<T extends InternalCallType, X extends (...args: any) => any = T extends InternalCallType.__add ? ArgumentBuilder["__add"] : T extends InternalCallType.__redirect ? ArgumentBuilder["__redirect"] : T extends InternalCallType.__getDescription ? ArgumentBuilder["__getDescription"] : T extends InternalCallType.__getMatcher ? ArgumentBuilder["__getMatcher"] : T extends InternalCallType.__evaluate ? ArgumentBuilder["__evaluate"] : T extends InternalCallType.__isExecutable ? ArgumentBuilder["__isExecutable"] : T extends InternalCallType.__getActions ? ArgumentBuilder["__getActions"] : T extends InternalCallType.__getParent ? ArgumentBuilder["__getParent"] : (...args: any[]) => any>(Method: T, ...args: Arguments<X>): ReturnType<X>;
+    private __isExecutable;
+    private __getDescription;
+    private __getMatcher;
+    private __getActions;
     private bind;
     private setDepth;
-    get root(): ArgumentBuilder<any>;
+    private __getParent;
+    private get root();
     /**
      *
      * @param target
      * @private
      */
-    __add(target: ArgumentBuilder<any>): void;
+    private __add;
     /**
      *
      * @param target
      * @private
      */
-    __redirect(target: ArgumentBuilder<any>): void;
+    private __redirect;
     /**
      * @example
      * ```
@@ -76,7 +97,7 @@ declare class ArgumentBuilder<HandlerFn extends Function = (ctx: CommandContext)
      * @param name
      * @returns
      */
-    string(name: string): ArgumentBuilder<AppendArgument<HandlerFn, string>>;
+    string(name: string, greedy?: boolean): ArgumentBuilder<AppendArgument<HandlerFn, string>>;
     /**
      * @example
      * ```
@@ -90,17 +111,6 @@ declare class ArgumentBuilder<HandlerFn extends Function = (ctx: CommandContext)
      * @returns
      */
     position(name: string): ArgumentBuilder<AppendArgument<HandlerFn, Location>>;
-    /**
-     * @example
-     * ```
-     * ArgumentBuilderInstance.literal("roll").selector("pattern")
-     * ```
-     * this would match `roll 1d20` and provide `1d20` as the pattern
-     *
-     * @param name
-     * @returns
-     */
-    selector(name: string): ArgumentBuilder<AppendArgument<HandlerFn, string>>;
     /**
      * @example
      * ```
@@ -125,7 +135,7 @@ declare class ArgumentBuilder<HandlerFn extends Function = (ctx: CommandContext)
      * @param message
      * @returns
      **/
-    requires(fn: (ctx: CommandContext) => boolean, error: string): ArgumentBuilder<HandlerFn>;
+    requires(fn: (ctx: CommandContext) => boolean, error: string, isConsideredInHelp?: boolean): ArgumentBuilder<HandlerFn>;
     /**
      * @example
      * ```
@@ -140,6 +150,14 @@ declare class ArgumentBuilder<HandlerFn extends Function = (ctx: CommandContext)
     executes(callback: HandlerFn): ArgumentBuilder<HandlerFn>;
     /**
      * @example
+     * ArgumentBuilderInstance.literal("roll").description("rolls a die")
+     * @param description
+     * @returns
+     *
+     */
+    description(description: string): this;
+    /**
+     * @example
      * ```
      * ArgumentBuilderInstance.evaluate(ctx,"roll 1d20")
      * ```
@@ -148,10 +166,15 @@ declare class ArgumentBuilder<HandlerFn extends Function = (ctx: CommandContext)
      * @param command
      * @returns
      **/
-    evaluate(ctx: CommandContext, command: string, args?: any[]): CommandResult;
+    private __evaluate;
 }
 export declare const commandRoot: ArgumentBuilder<(ctx: CommandContext) => void>;
-export declare const helpMessages: Map<string, string>;
-export declare function registerCommand(command: ArgumentBuilder, help: string, alias?: string[]): void;
+export declare function getPossibleCompletions(ctx: CommandContext): void;
+export declare function registerCommand(command: ArgumentBuilder, alias?: string[]): void;
 export declare function literal(value: string): ArgumentBuilder;
+declare let config: {
+    commandIndicator: string;
+    disableDefaultChatHandler: boolean;
+};
+export declare function updateConfig(configUpdate: Partial<typeof config>): void;
 export {};

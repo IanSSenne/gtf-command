@@ -43,4 +43,10 @@ export class ArgumentMatcher {
     this.name = name;
     return this;
   }
+  /**
+   * getCompletion
+   */
+  public getCompletion(_context: CommandContext): string {
+    throw new Error("Method not implemented.");
+  }
 }
