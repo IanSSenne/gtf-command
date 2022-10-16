@@ -196,6 +196,7 @@ enum InternalCallType {
   __isExecutable,
   __getActions,
   __getParent,
+  __root,
 }
 class ArgumentBuilder<
   HandlerFn extends Function = (ctx: CommandContext) => void
@@ -228,6 +229,8 @@ class ArgumentBuilder<
       ? ArgumentBuilder["__getActions"]
       : T extends InternalCallType.__getParent
       ? ArgumentBuilder["__getParent"]
+      : T extends InternalCallType.__root
+      ? () => ArgumentBuilder<any>
       : (...args: any[]) => any
   >(Method: T, ...args: Arguments<X>): ReturnType<X> {
     switch (Method) {
@@ -247,6 +250,8 @@ class ArgumentBuilder<
         return this.__getActions() as ReturnType<X>;
       case InternalCallType.__getParent:
         return this.__getParent() as ReturnType<X>;
+      case InternalCallType.__root:
+        return this.root as ReturnType<X>;
     }
   }
   private __isExecutable(): boolean {
@@ -566,16 +571,19 @@ export function getPossibleCompletions(ctx: CommandContext) {
   for (const node of executableNodes) {
     results.push([getCompletionsForNode(node), getDescriptionForNode(node)]);
   }
+  return results;
 }
 export function registerCommand(
   command: ArgumentBuilder,
   alias: string[] = []
 ) {
+  let cRoot = command._internalCall(InternalCallType.__root);
   alias.forEach((a) => {
-    commandRoot.literal(a)._internalCall(InternalCallType.__redirect, command);
+    commandRoot.literal(a)._internalCall(InternalCallType.__redirect, cRoot);
   });
-  commandRoot._internalCall(InternalCallType.__add, command);
+  commandRoot._internalCall(InternalCallType.__add, cRoot);
 }
+
 export function literal(value: string): ArgumentBuilder {
   return new ArgumentBuilder(new LiteralArgumentMatcher(value));
 }
