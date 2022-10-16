@@ -598,7 +598,7 @@ export function updateConfig(configUpdate: Partial<typeof config>) {
 world.events.beforeChat.subscribe((event) => {
   if (config.disableDefaultChatHandler) return;
   if (event.message.startsWith(config.commandIndicator)) {
-    const command = event.message.substring(1);
+    const command = event.message.substring(config.commandIndicator.length);
     const result = commandRoot._internalCall(
       InternalCallType.__evaluate,
       {
