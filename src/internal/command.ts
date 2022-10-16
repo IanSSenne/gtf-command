@@ -574,7 +574,7 @@ export function getPossibleCompletions(ctx: CommandContext) {
   return results;
 }
 export function registerCommand(
-  command: ArgumentBuilder,
+  command: ArgumentBuilder<any>,
   alias: string[] = []
 ) {
   let cRoot = command._internalCall(InternalCallType.__root);
